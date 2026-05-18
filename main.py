@@ -88,30 +88,46 @@ async def main() -> None:
     app = Application.builder().token(Config.TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", handle_start))
 
-    async with app:
-        await app.start()
-        await app.updater.start_polling(drop_pending_updates=True)
-
-        scheduler = AsyncIOScheduler(timezone="UTC")
-        scheduler.add_job(scan_and_signal, "interval", minutes=2, args=[app.bot])
-        scheduler.start()
-
-        logger.info(
-            f"Bot live — scanning every 2 min, signalling when confidence ≥ {Config.SIGNAL_THRESHOLD}%. "
-            "Send /start in Telegram."
-        )
-
-        # Run one scan immediately on startup
-        await scan_and_signal(app.bot)
-
+    # Retry loop — handles 409 Conflict (duplicate instance) on startup.
+    # If another instance is still shutting down, wait and retry.
+    for attempt in range(1, 6):
         try:
-            await asyncio.Event().wait()
-        except (KeyboardInterrupt, SystemExit):
-            pass
-        finally:
-            scheduler.shutdown()
-            await app.updater.stop()
-            await app.stop()
+            async with app:
+                await app.start()
+                await app.updater.start_polling(drop_pending_updates=True)
+
+                scheduler = AsyncIOScheduler(timezone="UTC")
+                scheduler.add_job(scan_and_signal, "interval", minutes=2, args=[app.bot])
+                scheduler.start()
+
+                logger.info(
+                    f"Bot live — scanning every 2 min, signalling when confidence ≥ {Config.SIGNAL_THRESHOLD}%. "
+                    "Send /start in Telegram."
+                )
+
+                await scan_and_signal(app.bot)
+
+                try:
+                    await asyncio.Event().wait()
+                except (KeyboardInterrupt, SystemExit):
+                    pass
+                finally:
+                    scheduler.shutdown()
+                    await app.updater.stop()
+                    await app.stop()
+            break  # clean exit
+
+        except Exception as exc:
+            if "409" in str(exc) or "Conflict" in str(exc):
+                wait = attempt * 5
+                logger.warning(
+                    f"Conflict: another instance is still running (attempt {attempt}/5). "
+                    f"Waiting {wait}s before retry… "
+                    "Make sure only ONE instance is deployed."
+                )
+                await asyncio.sleep(wait)
+            else:
+                raise
 
 
 if __name__ == "__main__":
