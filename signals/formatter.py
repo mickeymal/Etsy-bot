@@ -6,17 +6,6 @@ def _bar(pct: float, width: int = 5) -> str:
     return "▰" * filled + "▱" * (width - filled)
 
 
-def _short_end_date(end_date: str) -> str:
-    if not end_date:
-        return ""
-    try:
-        # ISO format: 2025-05-18T14:15:00Z
-        dt = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
-        return dt.strftime("%H:%M UTC")
-    except Exception:
-        return end_date[:16]
-
-
 class SignalFormatter:
     def format(
         self,
@@ -25,38 +14,52 @@ class SignalFormatter:
         fear_greed: dict,
         poly_market: dict,
     ) -> str:
-        long_conf  = signal["long_confidence"]
-        short_conf = signal["short_confidence"]
-        ticker     = market_data["ticker"]
-        price      = ticker["price"]
-        change_15m = signal["price_change_15m"]
-        change_24h = ticker["change_pct"]
+        direction  = signal["direction"]
+        confidence = signal["confidence"]
+        entry      = signal["entry_price"]
+        tp         = signal["tp_price"]
+        sl         = signal["sl_price"]
+        tp_pct     = signal["tp_pct"]
+        sl_pct     = signal["sl_pct"]
         rsi        = signal["rsi"]
         vol_ratio  = signal["vol_ratio"]
         fg_val     = fear_greed["value"]
         fg_label   = fear_greed["label"]
         market_url = poly_market.get("url", "https://polymarket.com")
-        title      = poly_market.get("title", "BTC 15-Min Market")
-        closes_at  = _short_end_date(poly_market.get("end_date", ""))
+        market_ttl = poly_market.get("title", "")
+        reasons    = signal.get("top_reasons", [])
         now        = datetime.now(timezone.utc).strftime("%H:%M UTC")
 
-        closes_line = f"⏳ Closes: *{closes_at}*\n" if closes_at else ""
+        if direction == "LONG":
+            action_line = "📈 *Action: BUY YES* \\(BTC going UP\\)"
+        else:
+            action_line = "📉 *Action: BUY NO* \\(BTC going DOWN\\)"
+
+        bar = _bar(confidence)
+
+        reasons_text = ""
+        if reasons:
+            bullet_lines = "\n".join(f"• {r}" for r in reasons)
+            reasons_text = f"\n*Why:*\n{bullet_lines}\n"
+
+        market_line = ""
+        if market_ttl:
+            market_line = f"\n📋 _{market_ttl[:80]}_"
 
         msg = (
-            f"🔔 *BTC 15-MIN MARKET OPEN*\n"
+            f"🚨 *SIGNAL ALERT — BTC 15\\-MIN*\n"
             f"━━━━━━━━━━━━━━━━━━━\n"
-            f"_{title}_\n\n"
-            f"📈 Signal: *LONG* \\(Buy YES\\)\n"
-            f"Confidence: *{long_conf:.0f}%* {_bar(long_conf)}\n\n"
-            f"📉 Signal: *SHORT* \\(Buy NO\\)\n"
-            f"Confidence: *{short_conf:.0f}%* {_bar(short_conf)}\n\n"
-            f"🔗 {market_url}\n"
-            f"━━━━━━━━━━━━━━━━━━━\n"
-            f"💰 BTC: *${price:,.2f}* ({change_15m:+.2f}% / 15m | {change_24h:+.2f}% / 24h)\n"
-            f"📊 RSI: *{rsi:.1f}* | Vol: *{vol_ratio:.1f}x* avg\n"
-            f"😱 Fear & Greed: *{fg_val}* — {fg_label}\n"
-            f"{closes_line}"
-            f"⏰ Signal at: *{now}*\n"
+            f"{action_line}\n"
+            f"*Confidence: {confidence:.0f}%* {bar}\n\n"
+            f"💰 *Entry:* ${entry:,.2f}\n"
+            f"🎯 *Rec\\. Take Profit:* ${tp:,.2f} \\({tp_pct:+.2f}%\\)\n"
+            f"🛑 *Rec\\. Stop Loss:* ${sl:,.2f} \\({sl_pct:+.2f}%\\)\n"
+            f"{reasons_text}"
+            f"━━━━━━━━━━━━━━━━━━━"
+            f"{market_line}\n"
+            f"🔗 {market_url}\n\n"
+            f"📊 RSI: *{rsi:.0f}* \\| Vol: *{vol_ratio:.1f}x* \\| F&G: *{fg_val}* {fg_label}\n"
+            f"⏰ {now}\n"
             f"⚠️ _You place the trade\\. Not financial advice\\._"
         )
         return msg
