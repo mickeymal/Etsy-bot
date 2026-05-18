@@ -82,8 +82,23 @@ async def scan_and_signal(bot) -> None:
             pass
 
 
+async def _clear_webhook(token: str) -> None:
+    """Delete any active webhook so polling works without 409 conflicts."""
+    import aiohttp
+    url = f"https://api.telegram.org/bot{token}/deleteWebhook"
+    async with aiohttp.ClientSession() as s:
+        async with s.post(url, json={"drop_pending_updates": True}) as r:
+            data = await r.json()
+            if data.get("ok"):
+                logger.info("Webhook cleared — polling mode active.")
+            else:
+                logger.warning(f"deleteWebhook response: {data}")
+
+
 async def main() -> None:
     Config.validate()
+
+    await _clear_webhook(Config.TELEGRAM_BOT_TOKEN)
 
     app = Application.builder().token(Config.TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", handle_start))
