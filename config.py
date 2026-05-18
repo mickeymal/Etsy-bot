@@ -10,8 +10,6 @@ class Config:
     # Minimum confidence % before a signal is sent (vs NEUTRAL)
     SIGNAL_THRESHOLD = float(os.getenv("SIGNAL_THRESHOLD", "60"))
 
-    BINANCE_BASE_URL = "https://api.binance.com"
-    BINANCE_FUTURES_URL = "https://fapi.binance.com"
     FEAR_GREED_URL = "https://api.alternative.me/fng/"
     POLYMARKET_GAMMA_URL = "https://gamma-api.polymarket.com"
 
