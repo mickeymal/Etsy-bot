@@ -1,41 +1,52 @@
-import aiohttp
 import logging
-from config import Config
+from telegram import Update
+from telegram.ext import ContextTypes
 
 logger = logging.getLogger(__name__)
 
-_API = "https://api.telegram.org"
+START_MESSAGE = (
+    "🤖 *BTC Signal Bot is Active\\!*\n\n"
+    "Every 15 minutes \\(at :00, :15, :30, :45 UTC\\) I'll send you:\n\n"
+    "📈 *LONG confidence %* — how bullish the market looks\n"
+    "📉 *SHORT confidence %* — how bearish the market looks\n"
+    "🔗 *Direct Polymarket link* — tap to open the market\n\n"
+    "Data I analyse:\n"
+    "• RSI \\+ MACD \\(price momentum\\)\n"
+    "• OKX funding rate \\(leverage positioning\\)\n"
+    "• Crypto Fear & Greed Index\n"
+    "• Order book imbalance\n"
+    "• Polymarket odds\n\n"
+    "You read the signal → you place the trade manually on Polymarket\\.\n\n"
+    "⚠️ _Not financial advice\\. DYOR\\._"
+)
 
 
-class TelegramDelivery:
-    """Sends a Markdown message to a Telegram chat via the Bot API.
-    No third-party library needed — plain HTTPS calls.
-    """
+async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(START_MESSAGE, parse_mode="MarkdownV2")
 
-    async def send(self, message: str) -> bool:
-        url = f"{_API}/bot{Config.TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {
-            "chat_id": Config.TELEGRAM_CHAT_ID,
-            "text": message,
-            "parse_mode": "Markdown",
-            "disable_web_page_preview": True,
-        }
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=15)) as r:
-                data = await r.json()
-                if not data.get("ok"):
-                    logger.error(f"Telegram send failed: {data}")
-                    return False
-                logger.info("Signal sent to Telegram.")
-                return True
 
-    async def send_error(self, error: str) -> None:
-        """Send a plain-text error notification (no Markdown to avoid parse errors)."""
-        url = f"{_API}/bot{Config.TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {
-            "chat_id": Config.TELEGRAM_CHAT_ID,
-            "text": f"[BTC Signal Bot Error]\n{error}",
-        }
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as r:
-                await r.json()
+async def send_signal(bot, message: str) -> bool:
+    from config import Config
+    try:
+        await bot.send_message(
+            chat_id=Config.TELEGRAM_CHAT_ID,
+            text=message,
+            parse_mode="Markdown",
+            disable_web_page_preview=True,
+        )
+        logger.info("Signal sent to Telegram.")
+        return True
+    except Exception as e:
+        logger.error(f"Telegram send failed: {e}")
+        return False
+
+
+async def send_error(bot, error: str) -> None:
+    from config import Config
+    try:
+        await bot.send_message(
+            chat_id=Config.TELEGRAM_CHAT_ID,
+            text=f"[BTC Signal Bot Error]\n{error}",
+        )
+    except Exception:
+        pass

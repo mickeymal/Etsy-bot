@@ -72,11 +72,15 @@ class PolymarketFetcher:
                 if yes_prob is None:
                     yes_prob = 0.5
 
+                slug = m.get("slug") or m.get("conditionId", "")
+                url = f"https://polymarket.com/event/{slug}" if slug else "https://polymarket.com"
+
                 scored.append({
                     "priority": priority,
                     "yes_prob": round(yes_prob, 4),
                     "title": m.get("question") or m.get("title", "BTC Market"),
                     "volume": float(m.get("volume", 0) or 0),
+                    "url": url,
                 })
             except Exception:
                 continue

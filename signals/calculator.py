@@ -188,12 +188,23 @@ class SignalCalculator:
 
         # Clamp and normalise
         score = max(-_MAX_SCORE, min(_MAX_SCORE, score))
-        confidence = round(abs(score) / _MAX_SCORE * 100, 1)
+
+        # Complementary confidence — always sums to 100%
+        # score=+85 → long=100%, short=0%
+        # score=0   → long=50%,  short=50%
+        # score=-85 → long=0%,   short=100%
+        long_confidence = round((score + _MAX_SCORE) / (2 * _MAX_SCORE) * 100, 1)
+        short_confidence = round(100 - long_confidence, 1)
+
+        direction = "LONG" if score > 0 else ("SHORT" if score < 0 else "NEUTRAL")
+        confidence = long_confidence if score >= 0 else short_confidence
 
         return {
             "score": score,
-            "direction": "LONG" if score > 0 else ("SHORT" if score < 0 else "NEUTRAL"),
+            "direction": direction,
             "confidence": confidence,
+            "long_confidence": long_confidence,
+            "short_confidence": short_confidence,
             "rsi": rsi,
             "macd": macd_val,
             "macd_signal": macd_sig,
