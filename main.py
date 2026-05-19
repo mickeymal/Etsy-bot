@@ -52,7 +52,12 @@ async def scan_and_signal() -> None:
 
         signal = SignalCalculator().calculate(market_data, funding_rate, fear_greed, poly_market)
         long_c, short_c = signal["long_confidence"], signal["short_confidence"]
-        logger.info(f"Scan — LONG {long_c:.0f}% / SHORT {short_c:.0f}% (threshold {Config.SIGNAL_THRESHOLD}%)")
+        direction = signal["direction"]
+        logger.info(
+            f"Scan [{poly_market.get('window_label','?')}] — "
+            f"LONG {long_c:.0f}% / SHORT {short_c:.0f}% → "
+            f"{'SIGNAL: ' + direction if max(long_c, short_c) >= Config.SIGNAL_THRESHOLD else 'below threshold'}"
+        )
 
         if max(long_c, short_c) < Config.SIGNAL_THRESHOLD:
             return

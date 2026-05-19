@@ -74,35 +74,39 @@ class PolymarketFetcher:
                 yes_prob = 0.5
 
             slug = m.get("slug", f"{_SLUG_PREFIX}-{window_ts}")
-            url  = f"https://polymarket.com/event/{slug}"
-
-            # Show the resolution time so user knows which window this is for
-            dt = datetime.fromtimestamp(window_ts, tz=_ET)
-            resolution_time = dt.strftime("%-I:%M %p ET")   # e.g. "8:45 PM ET"
-
-            # Start time = 15 minutes before resolution
-            start_ts = window_ts - _INTERVAL
-            start_dt = datetime.fromtimestamp(start_ts, tz=_ET)
-            start_time = start_dt.strftime("%-I:%M %p ET")
+            info = self._window_info(window_ts)
+            info["url"] = f"https://polymarket.com/event/{slug}"
 
             return {
-                "condition_id":    m.get("conditionId") or m.get("id") or slug,
-                "yes_prob":        round(yes_prob, 4),
-                "title":           m.get("question") or m.get("title", "BTC Up/Down 15-Min"),
-                "volume":          float(m.get("volume", 0) or 0),
-                "url":             url,
-                "resolution_ts":   window_ts,
-                "resolution_time": resolution_time,
-                "start_time":      start_time,
-                "window_label":    f"{start_time} → {resolution_time}",
+                "condition_id": m.get("conditionId") or m.get("id") or slug,
+                "yes_prob":     round(yes_prob, 4),
+                "title":        m.get("question") or m.get("title", "BTC Up/Down 15-Min"),
+                "volume":       float(m.get("volume", 0) or 0),
+                **info,
             }
         except Exception as e:
             logger.warning(f"Failed to parse market: {e}")
             return None
 
-    def _empty(self) -> dict:
+    def _window_info(self, window_ts: int) -> dict:
+        """Build window time labels from a Unix timestamp — no API needed."""
+        dt       = datetime.fromtimestamp(window_ts, tz=_ET)
+        start_dt = datetime.fromtimestamp(window_ts - _INTERVAL, tz=_ET)
+        res_time   = dt.strftime("%-I:%M %p ET")
+        start_time = start_dt.strftime("%-I:%M %p ET")
+        slug = f"{_SLUG_PREFIX}-{window_ts}"
         return {
-            "yes_prob": 0.5, "title": "", "url": "https://polymarket.com",
-            "condition_id": "", "volume": 0, "resolution_time": "",
-            "start_time": "", "window_label": "",
+            "resolution_ts":   window_ts,
+            "resolution_time": res_time,
+            "start_time":      start_time,
+            "window_label":    f"{start_time} → {res_time}",
+            "url":             f"https://polymarket.com/event/{slug}",
         }
+
+    def _empty(self) -> dict:
+        """Fallback when API is unavailable — still shows correct window from clock."""
+        now_ts     = int(time.time())
+        window_ts  = (now_ts // _INTERVAL) * _INTERVAL
+        base = self._window_info(window_ts)
+        base.update({"yes_prob": 0.5, "title": "", "condition_id": "", "volume": 0})
+        return base
