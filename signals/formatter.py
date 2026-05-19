@@ -1,4 +1,7 @@
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+_ET = ZoneInfo("America/New_York")
 
 
 def _bar(pct: float, width: int = 5) -> str:
@@ -28,7 +31,7 @@ class SignalFormatter:
         market_url    = poly_market.get("url", "https://polymarket.com")
         window_label  = poly_market.get("window_label", "")
         reasons       = signal.get("top_reasons", [])
-        now           = datetime.now(timezone.utc).strftime("%H:%M UTC")
+        now           = datetime.now(_ET).strftime("%-I:%M %p ET")
 
         if direction == "LONG":
             action_line = "📈 <b>Action: BUY YES</b> (BTC going UP)"

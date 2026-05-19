@@ -2,6 +2,9 @@ import time
 import aiohttp
 import logging
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+_ET = ZoneInfo("America/New_York")
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -74,13 +77,13 @@ class PolymarketFetcher:
             url  = f"https://polymarket.com/event/{slug}"
 
             # Show the resolution time so user knows which window this is for
-            dt = datetime.fromtimestamp(window_ts, tz=timezone.utc)
-            resolution_time = dt.strftime("%-I:%M %p UTC")   # e.g. "8:45 PM UTC"
+            dt = datetime.fromtimestamp(window_ts, tz=_ET)
+            resolution_time = dt.strftime("%-I:%M %p ET")   # e.g. "8:45 PM ET"
 
             # Start time = 15 minutes before resolution
             start_ts = window_ts - _INTERVAL
-            start_dt = datetime.fromtimestamp(start_ts, tz=timezone.utc)
-            start_time = start_dt.strftime("%-I:%M %p UTC")
+            start_dt = datetime.fromtimestamp(start_ts, tz=_ET)
+            start_time = start_dt.strftime("%-I:%M %p ET")
 
             return {
                 "condition_id":    m.get("conditionId") or m.get("id") or slug,
