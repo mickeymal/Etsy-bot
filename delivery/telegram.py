@@ -11,7 +11,7 @@ async def send_signal(message: str) -> bool:
     payload = {
         "chat_id": Config.TELEGRAM_CHAT_ID,
         "text": message,
-        "parse_mode": "MarkdownV2",
+        "parse_mode": "HTML",
         "disable_web_page_preview": True,
     }
     async with aiohttp.ClientSession() as session:

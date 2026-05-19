@@ -31,35 +31,35 @@ class SignalFormatter:
         now        = datetime.now(timezone.utc).strftime("%H:%M UTC")
 
         if direction == "LONG":
-            action_line = "📈 *Action: BUY YES* \\(BTC going UP\\)"
+            action_line = "📈 <b>Action: BUY YES</b> (BTC going UP)"
         else:
-            action_line = "📉 *Action: BUY NO* \\(BTC going DOWN\\)"
+            action_line = "📉 <b>Action: BUY NO</b> (BTC going DOWN)"
 
         bar = _bar(confidence)
 
         reasons_text = ""
         if reasons:
             bullet_lines = "\n".join(f"• {r}" for r in reasons)
-            reasons_text = f"\n*Why:*\n{bullet_lines}\n"
+            reasons_text = f"\n<b>Why:</b>\n{bullet_lines}\n"
 
         market_line = ""
         if market_ttl:
-            market_line = f"\n📋 _{market_ttl[:80]}_"
+            market_line = f"\n📋 <i>{market_ttl[:80]}</i>"
 
         msg = (
-            f"🚨 *SIGNAL ALERT — BTC 15\\-MIN*\n"
+            f"🚨 <b>SIGNAL ALERT — BTC 15-MIN</b>\n"
             f"━━━━━━━━━━━━━━━━━━━\n"
             f"{action_line}\n"
-            f"*Confidence: {confidence:.0f}%* {bar}\n\n"
-            f"💰 *Entry:* ${entry:,.2f}\n"
-            f"🎯 *Rec\\. Take Profit:* ${tp:,.2f} \\({tp_pct:+.2f}%\\)\n"
-            f"🛑 *Rec\\. Stop Loss:* ${sl:,.2f} \\({sl_pct:+.2f}%\\)\n"
+            f"<b>Confidence: {confidence:.0f}%</b> {bar}\n\n"
+            f"💰 <b>Entry:</b> ${entry:,.2f}\n"
+            f"🎯 <b>Rec. Take Profit:</b> ${tp:,.2f} ({tp_pct:+.2f}%)\n"
+            f"🛑 <b>Rec. Stop Loss:</b> ${sl:,.2f} ({sl_pct:+.2f}%)\n"
             f"{reasons_text}"
             f"━━━━━━━━━━━━━━━━━━━"
             f"{market_line}\n"
             f"🔗 {market_url}\n\n"
-            f"📊 RSI: *{rsi:.0f}* \\| Vol: *{vol_ratio:.1f}x* \\| F&G: *{fg_val}* {fg_label}\n"
+            f"📊 RSI: <b>{rsi:.0f}</b> | Vol: <b>{vol_ratio:.1f}x</b> | F&G: <b>{fg_val}</b> {fg_label}\n"
             f"⏰ {now}\n"
-            f"⚠️ _You place the trade\\. Not financial advice\\._"
+            f"⚠️ <i>You place the trade. Not financial advice.</i>"
         )
         return msg
