@@ -39,8 +39,10 @@ async def scan_and_signal() -> None:
 
     elapsed = time.monotonic() - _last_signal_at
     if _last_signal_at and elapsed < _SIGNAL_COOLDOWN:
-        logger.debug(f"Cooldown — {int((_SIGNAL_COOLDOWN - elapsed) / 60)}min remaining.")
+        logger.info(f"Cooldown — {int((_SIGNAL_COOLDOWN - elapsed) / 60)}min remaining. Skipping scan.")
         return
+
+    logger.info("Scanning market data...")
 
     try:
         binance = BinanceDataFetcher()
