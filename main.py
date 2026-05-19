@@ -2,8 +2,11 @@
 BTC 15-Min Polymarket Signal Bot
 ==================================
 Scans 24/7. Only sends a signal when confidence is high enough.
-Never spams — 20-minute cooldown between signals.
-Responds to /start in Telegram.
+20-min cooldown after each signal. Responds to /start in Telegram.
+
+Deployment modes (auto-detected):
+  - Railway: webhook mode via RAILWAY_PUBLIC_DOMAIN — no polling, no 409 ever
+  - Local:   polling mode (run only one instance)
 
 Setup:
   1. cp .env.example .env  →  fill in TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID
@@ -13,6 +16,7 @@ Setup:
 
 import asyncio
 import logging
+import os
 import time
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -32,19 +36,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Railway sets RAILWAY_PUBLIC_DOMAIN automatically on every deployment.
+# If it's present we use webhook mode; otherwise polling (local dev).
+RAILWAY_DOMAIN = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
+PORT = int(os.getenv("PORT", "8080"))
+
 _last_signal_at: float = 0.0
 _SIGNAL_COOLDOWN = 20 * 60   # 20 minutes between signals
 
 
 async def scan_and_signal(bot) -> None:
-    """Fetch market data, score it, and send a signal only when it's good enough."""
+    """Fetch data, score it, send a Telegram signal only when strong enough."""
     global _last_signal_at
 
-    # Respect cooldown — don't spam
     elapsed = time.monotonic() - _last_signal_at
     if _last_signal_at and elapsed < _SIGNAL_COOLDOWN:
-        remaining = int((_SIGNAL_COOLDOWN - elapsed) / 60)
-        logger.debug(f"Cooldown active — {remaining}min until next possible signal.")
+        logger.debug(f"Cooldown — {int((_SIGNAL_COOLDOWN - elapsed) / 60)}min remaining.")
         return
 
     try:
@@ -60,12 +67,9 @@ async def scan_and_signal(bot) -> None:
         }
 
         signal = SignalCalculator().calculate(market_data, funding_rate, fear_greed, poly_market)
-
-        long_c  = signal["long_confidence"]
-        short_c = signal["short_confidence"]
+        long_c, short_c = signal["long_confidence"], signal["short_confidence"]
         logger.info(f"Scan — LONG {long_c:.0f}% / SHORT {short_c:.0f}% (threshold {Config.SIGNAL_THRESHOLD}%)")
 
-        # Only send if one direction is clearly dominant
         if max(long_c, short_c) < Config.SIGNAL_THRESHOLD:
             return
 
@@ -82,68 +86,54 @@ async def scan_and_signal(bot) -> None:
             pass
 
 
-async def _clear_webhook(token: str) -> None:
-    """Delete any active webhook so polling works without 409 conflicts."""
-    import aiohttp
-    url = f"https://api.telegram.org/bot{token}/deleteWebhook"
-    async with aiohttp.ClientSession() as s:
-        async with s.post(url, json={"drop_pending_updates": True}) as r:
-            data = await r.json()
-            if data.get("ok"):
-                logger.info("Webhook cleared — polling mode active.")
-            else:
-                logger.warning(f"deleteWebhook response: {data}")
+async def post_init(application: Application) -> None:
+    """Runs once after the bot is ready — starts the scheduler and fires a first scan."""
+    scheduler = AsyncIOScheduler(timezone="UTC")
+    scheduler.add_job(scan_and_signal, "interval", minutes=2, args=[application.bot])
+    scheduler.start()
+    application.bot_data["scheduler"] = scheduler
+    mode = "webhook" if RAILWAY_DOMAIN else "polling"
+    logger.info(f"Bot live [{mode}] — scanning every 2 min, threshold ≥ {Config.SIGNAL_THRESHOLD}%.")
+    await scan_and_signal(application.bot)
 
 
-async def main() -> None:
+async def post_shutdown(application: Application) -> None:
+    """Runs on shutdown — stops the scheduler cleanly."""
+    scheduler = application.bot_data.get("scheduler")
+    if scheduler and scheduler.running:
+        scheduler.shutdown()
+
+
+def main() -> None:
     Config.validate()
 
-    await _clear_webhook(Config.TELEGRAM_BOT_TOKEN)
-
-    app = Application.builder().token(Config.TELEGRAM_BOT_TOKEN).build()
+    app = (
+        Application.builder()
+        .token(Config.TELEGRAM_BOT_TOKEN)
+        .post_init(post_init)
+        .post_shutdown(post_shutdown)
+        .build()
+    )
     app.add_handler(CommandHandler("start", handle_start))
 
-    # Retry loop — handles 409 Conflict (duplicate instance) on startup.
-    # If another instance is still shutting down, wait and retry.
-    for attempt in range(1, 6):
-        try:
-            async with app:
-                await app.start()
-                await app.updater.start_polling(drop_pending_updates=True)
-
-                scheduler = AsyncIOScheduler(timezone="UTC")
-                scheduler.add_job(scan_and_signal, "interval", minutes=2, args=[app.bot])
-                scheduler.start()
-
-                logger.info(
-                    f"Bot live — scanning every 2 min, signalling when confidence ≥ {Config.SIGNAL_THRESHOLD}%. "
-                    "Send /start in Telegram."
-                )
-
-                await scan_and_signal(app.bot)
-
-                try:
-                    await asyncio.Event().wait()
-                except (KeyboardInterrupt, SystemExit):
-                    pass
-                finally:
-                    scheduler.shutdown()
-                    await app.updater.stop()
-                    await app.stop()
-            break  # clean exit
-
-        except Exception as exc:
-            if "409" in str(exc) or "Conflict" in str(exc):
-                wait = attempt * 5
-                logger.warning(
-                    f"Conflict: another instance is still running (attempt {attempt}/5). "
-                    f"Waiting {wait}s before retry… "
-                    "Make sure only ONE instance is deployed."
-                )
-                await asyncio.sleep(wait)
-            else:
-                raise
+    if RAILWAY_DOMAIN:
+        # ── Webhook mode (Railway) ──────────────────────────────────────────
+        # Telegram pushes updates to our HTTPS URL. No getUpdates polling at all.
+        # This completely eliminates 409 Conflict errors during rolling restarts.
+        webhook_url = f"https://{RAILWAY_DOMAIN}/webhook"
+        logger.info(f"Starting in webhook mode → {webhook_url} (internal port {PORT})")
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            url_path="webhook",
+            webhook_url=webhook_url,
+            drop_pending_updates=True,
+        )
+    else:
+        # ── Polling mode (local) ────────────────────────────────────────────
+        logger.info("Starting in polling mode (local — ensure only one instance runs).")
+        app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
