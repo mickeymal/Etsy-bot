@@ -31,16 +31,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 _last_signal_at: float = 0.0
-_SIGNAL_COOLDOWN = 20 * 60   # 20 minutes between signals
 
 
 async def scan_and_signal() -> None:
     global _last_signal_at
-
-    elapsed = time.monotonic() - _last_signal_at
-    if _last_signal_at and elapsed < _SIGNAL_COOLDOWN:
-        logger.info(f"Cooldown — {int((_SIGNAL_COOLDOWN - elapsed) / 60)}min remaining. Skipping scan.")
-        return
 
     logger.info("Scanning market data...")
 
