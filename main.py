@@ -61,10 +61,13 @@ async def scan_and_signal() -> None:
         if max(long_c, short_c) < Config.SIGNAL_THRESHOLD:
             return
 
-        _last_signal_at = time.monotonic()
         message = SignalFormatter().format(signal, market_data, fear_greed, poly_market)
-        await send_signal(message)
-        logger.info(f"Signal sent — {signal['direction']} {signal['confidence']:.0f}%")
+        delivered = await send_signal(message)
+        if delivered:
+            _last_signal_at = time.monotonic()
+            logger.info(f"Signal sent — {signal['direction']} {signal['confidence']:.0f}%")
+        else:
+            logger.error("Signal NOT delivered — check TELEGRAM_CHAT_ID in Railway variables.")
 
     except Exception as exc:
         logger.error(f"Scan failed: {exc}", exc_info=True)
