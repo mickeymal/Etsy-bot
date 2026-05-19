@@ -30,11 +30,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-_last_signal_at: float = 0.0
+# Active position state: None | "LONG" | "SHORT"
+_active_position: str | None = None
+_position_entry_price: float = 0.0
+
+# Exit fires when the opposite confidence exceeds this threshold
+_EXIT_THRESHOLD = 55
 
 
 async def scan_and_signal() -> None:
-    global _last_signal_at
+    global _active_position, _position_entry_price
 
     logger.info("Scanning market data...")
 
@@ -53,20 +58,58 @@ async def scan_and_signal() -> None:
         signal = SignalCalculator().calculate(market_data, funding_rate, fear_greed, poly_market)
         long_c, short_c = signal["long_confidence"], signal["short_confidence"]
         direction = signal["direction"]
+        formatter = SignalFormatter()
+
         logger.info(
             f"Scan [{poly_market.get('window_label','?')}] — "
-            f"LONG {long_c:.0f}% / SHORT {short_c:.0f}% → "
-            f"{'SIGNAL: ' + direction if max(long_c, short_c) >= Config.SIGNAL_THRESHOLD else 'below threshold'}"
+            f"LONG {long_c:.0f}% / SHORT {short_c:.0f}% | "
+            f"position={_active_position or 'none'}"
         )
 
-        if max(long_c, short_c) < Config.SIGNAL_THRESHOLD:
+        # ── Check for exit signal when a position is open ─────────────────────
+        if _active_position == "LONG" and short_c >= _EXIT_THRESHOLD:
+            msg = formatter.format_exit(
+                signal, market_data, fear_greed, poly_market,
+                open_position="LONG",
+                entry_price=_position_entry_price,
+            )
+            delivered = await send_signal(msg)
+            if delivered:
+                logger.info(f"EXIT LONG signal sent (SHORT {short_c:.0f}% >= {_EXIT_THRESHOLD}%)")
+                _active_position = None
             return
 
-        message = SignalFormatter().format(signal, market_data, fear_greed, poly_market)
+        if _active_position == "SHORT" and long_c >= _EXIT_THRESHOLD:
+            msg = formatter.format_exit(
+                signal, market_data, fear_greed, poly_market,
+                open_position="SHORT",
+                entry_price=_position_entry_price,
+            )
+            delivered = await send_signal(msg)
+            if delivered:
+                logger.info(f"EXIT SHORT signal sent (LONG {long_c:.0f}% >= {_EXIT_THRESHOLD}%)")
+                _active_position = None
+            return
+
+        # ── New entry signal ───────────────────────────────────────────────────
+        if max(long_c, short_c) < Config.SIGNAL_THRESHOLD:
+            logger.info(
+                f"Below threshold ({Config.SIGNAL_THRESHOLD}%) — "
+                f"{'SIGNAL: ' + direction if max(long_c, short_c) >= Config.SIGNAL_THRESHOLD else 'no signal'}"
+            )
+            return
+
+        # Don't spam same direction while already in that position
+        if _active_position == direction:
+            logger.info(f"Already in {direction} — skipping duplicate entry signal")
+            return
+
+        message = formatter.format(signal, market_data, fear_greed, poly_market)
         delivered = await send_signal(message)
         if delivered:
-            _last_signal_at = time.monotonic()
-            logger.info(f"Signal sent — {signal['direction']} {signal['confidence']:.0f}%")
+            _active_position = direction
+            _position_entry_price = signal["entry_price"]
+            logger.info(f"Signal sent — {direction} {signal['confidence']:.0f}% @ ${_position_entry_price:,.2f}")
         else:
             logger.error("Signal NOT delivered — check TELEGRAM_CHAT_ID in Railway variables.")
 

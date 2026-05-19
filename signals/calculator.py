@@ -1,17 +1,19 @@
 """
 Multi-factor BTC signal calculator.
 
-Score range: -85 to +85.
+Score: -100 (max short) to +100 (max long).
 long_confidence + short_confidence always = 100%.
-TP/SL derived from ATR (Average True Range) of recent candles.
+TP/SL derived from ATR of recent candles.
 """
 
 import logging
 
 logger = logging.getLogger(__name__)
 
-_MAX_SCORE = 85
+_MAX_SCORE = 95   # sum of all max-weight factors
 
+
+# ── Technical helpers ─────────────────────────────────────────────────────────
 
 def _rsi(closes: list[float], period: int = 14) -> float:
     if len(closes) < period + 1:
@@ -47,26 +49,22 @@ def _macd(closes: list[float]) -> tuple[float, float]:
 
 
 def _atr(klines: list[dict], period: int = 14) -> float:
-    """Average True Range — measures recent volatility per candle."""
     if len(klines) < period + 1:
-        # Fallback: use the range of the last candle
-        c = klines[-1]
-        return max(c["high"] - c["low"], 50.0)
-    true_ranges = []
+        return max(klines[-1]["high"] - klines[-1]["low"], 50.0)
+    trs = []
     for i in range(-period, 0):
         c = klines[i]
-        prev_close = klines[i - 1]["close"]
-        tr = max(c["high"] - c["low"],
-                 abs(c["high"] - prev_close),
-                 abs(c["low"] - prev_close))
-        true_ranges.append(tr)
-    return sum(true_ranges) / len(true_ranges)
+        p = klines[i - 1]["close"]
+        trs.append(max(c["high"] - c["low"], abs(c["high"] - p), abs(c["low"] - p)))
+    return sum(trs) / len(trs)
 
 
 def _avg_volume(klines: list[dict], lookback: int = 20) -> float:
     vols = [c["volume"] for c in klines[-lookback - 1:-1]]
     return sum(vols) / len(vols) if vols else 1.0
 
+
+# ── Calculator ────────────────────────────────────────────────────────────────
 
 class SignalCalculator:
     def calculate(
@@ -80,38 +78,55 @@ class SignalCalculator:
         ticker   = market_data["ticker"]
         ob_ratio = market_data["ob_ratio"]
 
-        closes        = [c["close"] for c in klines]
-        current_vol   = klines[-1]["volume"]
-        avg_vol       = _avg_volume(klines)
-        vol_ratio     = current_vol / avg_vol if avg_vol else 1.0
-        price_change  = ((closes[-1] - closes[-2]) / closes[-2] * 100) if len(closes) >= 2 else 0.0
+        closes       = [c["close"] for c in klines]
+        current_vol  = klines[-1]["volume"]
+        avg_vol      = _avg_volume(klines)
+        vol_ratio    = current_vol / avg_vol if avg_vol else 1.0
+        price_change = ((closes[-1] - closes[-2]) / closes[-2] * 100) if len(closes) >= 2 else 0.0
 
-        rsi          = _rsi(closes)
+        rsi           = _rsi(closes)
         macd_val, macd_sig = _macd(closes)
-        atr          = _atr(klines)
-        entry_price  = closes[-1]
+        atr           = _atr(klines)
+        entry_price   = closes[-1]
 
         score   = 0
         factors = []
 
-        # --- RSI (weight 20) ---
+        # ── 1. Price momentum (weight 20) ── most important for 15-min trade ──
+        if price_change > 0.5:
+            s = 20;  factors.append(("Strong bullish momentum", s, f"{price_change:+.2f}%"))
+        elif price_change > 0.2:
+            s = 12;  factors.append(("Bullish momentum", s, f"{price_change:+.2f}%"))
+        elif price_change > 0.05:
+            s = 5;   factors.append(("Slight bullish momentum", s, f"{price_change:+.2f}%"))
+        elif price_change < -0.5:
+            s = -20; factors.append(("Strong bearish momentum", s, f"{price_change:+.2f}%"))
+        elif price_change < -0.2:
+            s = -12; factors.append(("Bearish momentum", s, f"{price_change:+.2f}%"))
+        elif price_change < -0.05:
+            s = -5;  factors.append(("Slight bearish momentum", s, f"{price_change:+.2f}%"))
+        else:
+            s = 0;   factors.append(("No momentum", 0, f"{price_change:+.2f}%"))
+        score += s
+
+        # ── 2. RSI (weight 20) ──────────────────────────────────────────────
         if rsi < 30:
-            s = 20; factors.append(("RSI extreme oversold", s, f"{rsi:.0f}"))
+            s = 20;  factors.append(("RSI extreme oversold", s, f"{rsi:.0f}"))
         elif rsi < 40:
-            s = 12; factors.append(("RSI oversold", s, f"{rsi:.0f}"))
-        elif rsi < 48:
-            s = 5;  factors.append(("RSI near oversold", s, f"{rsi:.0f}"))
+            s = 12;  factors.append(("RSI oversold", s, f"{rsi:.0f}"))
+        elif rsi < 45:
+            s = 5;   factors.append(("RSI near oversold", s, f"{rsi:.0f}"))
         elif rsi > 70:
             s = -20; factors.append(("RSI extreme overbought", s, f"{rsi:.0f}"))
         elif rsi > 60:
             s = -12; factors.append(("RSI overbought", s, f"{rsi:.0f}"))
-        elif rsi > 52:
+        elif rsi > 55:
             s = -5;  factors.append(("RSI near overbought", s, f"{rsi:.0f}"))
         else:
             s = 0;   factors.append(("RSI neutral", 0, f"{rsi:.0f}"))
         score += s
 
-        # --- MACD (weight 15) ---
+        # ── 3. MACD (weight 15) ─────────────────────────────────────────────
         if macd_val > macd_sig:
             s = 15 if macd_val > 0 else 8
             factors.append(("MACD bullish cross", s, f"{macd_val:.1f}"))
@@ -120,34 +135,34 @@ class SignalCalculator:
             factors.append(("MACD bearish cross", s, f"{macd_val:.1f}"))
         score += s
 
-        # --- Funding rate (weight 20) ---
+        # ── 4. Funding rate (weight 20) ─────────────────────────────────────
         if funding_rate < -0.0005:
-            s = 20;  factors.append(("Shorts paying (squeeze risk)", s, f"{funding_rate*100:.4f}%"))
+            s = 20;  factors.append(("Shorts paying — squeeze risk", s, f"{funding_rate*100:.4f}%"))
         elif funding_rate < -0.0001:
-            s = 10;  factors.append(("Slight short bias", s, f"{funding_rate*100:.4f}%"))
+            s = 10;  factors.append(("Slight short bias in futures", s, f"{funding_rate*100:.4f}%"))
         elif funding_rate > 0.0005:
-            s = -20; factors.append(("Longs paying (liquidation risk)", s, f"{funding_rate*100:.4f}%"))
+            s = -20; factors.append(("Longs paying — liquidation risk", s, f"{funding_rate*100:.4f}%"))
         elif funding_rate > 0.0001:
-            s = -10; factors.append(("Slight long bias", s, f"{funding_rate*100:.4f}%"))
+            s = -10; factors.append(("Slight long bias in futures", s, f"{funding_rate*100:.4f}%"))
         else:
             s = 0;   factors.append(("Funding neutral", 0, f"{funding_rate*100:.4f}%"))
         score += s
 
-        # --- Fear & Greed (weight 15) ---
+        # ── 5. Fear & Greed (weight 10 — macro context, lower weight) ───────
         fg = fear_greed["value"]
         if fg <= 25:
-            s = 15;  factors.append(("Extreme fear (contrarian buy)", s, str(fg)))
+            s = 10;  factors.append(("Extreme fear — contrarian buy", s, str(fg)))
         elif fg <= 40:
-            s = 8;   factors.append(("Market fear", s, str(fg)))
+            s = 5;   factors.append(("Fear — mild bullish bias", s, str(fg)))
         elif fg >= 75:
-            s = -15; factors.append(("Extreme greed (contrarian sell)", s, str(fg)))
+            s = -10; factors.append(("Extreme greed — contrarian sell", s, str(fg)))
         elif fg >= 60:
-            s = -8;  factors.append(("Market greed", s, str(fg)))
+            s = -5;  factors.append(("Greed — mild bearish bias", s, str(fg)))
         else:
             s = 0;   factors.append(("Sentiment neutral", 0, str(fg)))
         score += s
 
-        # --- Order book (weight 10) ---
+        # ── 6. Order book (weight 10) ────────────────────────────────────────
         if ob_ratio > 1.3:
             s = 10;  factors.append(("Heavy bid pressure", s, f"{ob_ratio:.2f}x"))
         elif ob_ratio > 1.1:
@@ -160,17 +175,7 @@ class SignalCalculator:
             s = 0;   factors.append(("Order book balanced", 0, f"{ob_ratio:.2f}x"))
         score += s
 
-        # --- Polymarket odds (weight 5) ---
-        yes_prob = poly_odds.get("yes_prob", 0.5)
-        if yes_prob > 0.65:
-            s = 5;  factors.append(("Polymarket YES favored", s, f"{yes_prob*100:.0f}%"))
-        elif yes_prob < 0.35:
-            s = -5; factors.append(("Polymarket NO favored", s, f"{yes_prob*100:.0f}%"))
-        else:
-            s = 0;  factors.append(("Polymarket even odds", 0, f"{yes_prob*100:.0f}%"))
-        score += s
-
-        # --- Volume amplifier ---
+        # ── Volume amplifier (boosts signal, not scored independently) ───────
         if vol_ratio >= 1.5:
             score = int(score * 1.15)
             factors.append(("Volume spike", 0, f"{vol_ratio:.1f}x avg"))
@@ -184,9 +189,7 @@ class SignalCalculator:
         direction        = "LONG" if score > 0 else ("SHORT" if score < 0 else "NEUTRAL")
         confidence       = long_confidence if score >= 0 else short_confidence
 
-        # TP / SL based on ATR
-        # LONG:  TP = +1.5×ATR,  SL = -0.75×ATR   (2:1 risk/reward)
-        # SHORT: TP = -1.5×ATR,  SL = +0.75×ATR
+        # TP / SL  (2:1 risk/reward based on ATR)
         if direction == "SHORT":
             tp_price = entry_price - 1.5 * atr
             sl_price = entry_price + 0.75 * atr
@@ -197,10 +200,10 @@ class SignalCalculator:
         tp_pct = (tp_price - entry_price) / entry_price * 100
         sl_pct = (sl_price - entry_price) / entry_price * 100
 
-        # Top reasons (strongest factors in the dominant direction)
-        signed_factors = [(n, s, d) for n, s, d in factors if s != 0]
-        signed_factors.sort(key=lambda x: x[1] if score >= 0 else -x[1], reverse=True)
-        top_reasons = [f"{n} ({d})" for n, s, d in signed_factors[:3] if abs(s) >= 5]
+        # Top 3 reasons in signal direction
+        signed = [(n, s, d) for n, s, d in factors if s != 0]
+        signed.sort(key=lambda x: x[1] if score >= 0 else -x[1], reverse=True)
+        top_reasons = [f"{n} ({d})" for n, s, d in signed[:3] if abs(s) >= 5]
 
         return {
             "score":            score,
@@ -210,7 +213,6 @@ class SignalCalculator:
             "short_confidence": short_confidence,
             "rsi":              rsi,
             "macd":             macd_val,
-            "macd_signal":      macd_sig,
             "price_change_15m": price_change,
             "vol_ratio":        vol_ratio,
             "entry_price":      entry_price,
